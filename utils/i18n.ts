@@ -53,7 +53,9 @@ export const translations = {
       processing: 'Processing',
       error: 'Error',
       preview: 'Quick Preview',
-      truncated: '... (content truncated)'
+      truncated: '... (content truncated)',
+      confirmDelete: 'Are you sure you want to permanently delete this document?',
+      deleting: 'Deleting...'
     },
     settings: {
       title: 'System Configuration',
@@ -82,7 +84,12 @@ export const translations = {
     },
     modal: {
       copy: 'Copy Content',
-      close: 'Close'
+      close: 'Close',
+      tabContent: 'Original Content',
+      tabChunks: 'Semantic Chunks',
+      chunkHeader: 'Chunk #{index}',
+      chars: 'chars',
+      noChunks: 'No chunking data available for this document.'
     }
   },
   zh: {
@@ -137,7 +144,9 @@ export const translations = {
       processing: '处理中',
       error: '错误',
       preview: '快速预览',
-      truncated: '... (内容已截断)'
+      truncated: '... (内容已截断)',
+      confirmDelete: '确定要永久删除该文档及其所有切片吗？',
+      deleting: '删除中...'
     },
     settings: {
       title: '系统配置',
@@ -166,7 +175,12 @@ export const translations = {
     },
     modal: {
       copy: '复制内容',
-      close: '关闭'
+      close: '关闭',
+      tabContent: '原文预览',
+      tabChunks: '语义切片详情',
+      chunkHeader: '切片 #{index}',
+      chars: '字符',
+      noChunks: '该文档暂无切片数据。'
     }
   }
 };

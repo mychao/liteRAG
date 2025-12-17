@@ -1,67 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
 import KnowledgeBase from './components/KnowledgeBase';
 import Settings from './components/Settings';
 import FilePreviewModal from './components/FilePreviewModal';
 import { Document, Role, Language, ModelSettings } from './types';
-
-// Mock initial data
-const initialDocs: Document[] = [
-    {
-        id: '1',
-        name: 'Employee_Handbook_2024.md',
-        type: 'text/markdown',
-        department: 'all',
-        content: `
-# Employee Handbook 2024
-## 1. Work Hours
-Standard work hours are 9:00 AM to 5:00 PM.
-
-## 2. Remote Work Policy
-Employees are allowed 2 days of remote work per week.
-        `,
-        uploadDate: Date.now(),
-        status: 'ready'
-    },
-    {
-        id: '2',
-        name: 'Project_Titan_Specs.txt',
-        type: 'text/plain',
-        department: 'rnd',
-        content: `
-CONFIDENTIAL - R&D DEPARTMENT ONLY
-Project Titan Technical Specifications:
-- Codename: X-2024-V1
-- Battery Capacity: 5000mAh
-- Chipset: A17 Pro Mock
-- Release Target: Q4 2024
-        `,
-        uploadDate: Date.now(),
-        status: 'ready'
-    },
-    {
-        id: '3',
-        name: 'Salary_Bands_2024.txt',
-        type: 'text/plain',
-        department: 'hr',
-        content: `
-HR CONFIDENTIAL
-Salary Bands for 2024:
-- Junior Engineer: $80k - $100k
-- Senior Engineer: $120k - $160k
-- Staff Engineer: $170k+
-        `,
-        uploadDate: Date.now(),
-        status: 'ready'
-    }
-];
+import { buildSearchIndex } from './services/geminiService';
+import { db } from './services/db';
 
 const App: React.FC = () => {
+  const [isInitializing, setIsInitializing] = useState(true);
   const [activeTab, setActiveTab] = useState<'chat' | 'knowledge' | 'settings'>('chat');
   
-  // App State
-  const [documents, setDocuments] = useState<Document[]>(initialDocs);
+  // App State - We now only hold a subset or full set depending on need.
+  // For RAG Search, we need ALL text content for the index (loaded once).
+  // For KnowledgeBase UI, we use pagination via the component.
+  const [documents, setDocuments] = useState<Document[]>([]); // This holds ALL docs for SEARCH INDEX only
+  
   const [currentRole, setCurrentRole] = useState<Role>('admin');
   const [useHybridSearch, setUseHybridSearch] = useState<boolean>(true);
   const [language, setLanguage] = useState<Language>('en');
@@ -74,6 +29,70 @@ const App: React.FC = () => {
     baseUrl: '',
     apiKey: ''
   });
+
+  // 1. Initialize DB and Load Data
+  useEffect(() => {
+    const initApp = async () => {
+        try {
+            await db.init();
+            
+            // Load Settings
+            const savedSettings = await db.getSettings();
+            if (savedSettings) {
+                setCurrentRole(savedSettings.currentRole);
+                setUseHybridSearch(savedSettings.useHybridSearch);
+                setLanguage(savedSettings.language);
+                if (savedSettings.modelSettings) {
+                    setModelSettings(savedSettings.modelSettings);
+                }
+            }
+
+            // Load ALL documents for the Search Engine (In-Memory Index)
+            // In a real microservice, this would be handled by the backend vector DB.
+            // For this frontend-only "Enterprise" demo, we load them into memory.
+            const allDocs = await db.getAllDocuments();
+            setDocuments(allDocs);
+            
+            // Build the index immediately
+            buildSearchIndex(allDocs);
+            
+        } catch (e) {
+            console.error("Failed to initialize app:", e);
+        } finally {
+            setIsInitializing(false);
+        }
+    };
+    
+    initApp();
+  }, []);
+
+  // 2. Persist Settings changes
+  useEffect(() => {
+    if (!isInitializing) {
+        db.saveSettings({
+            currentRole,
+            useHybridSearch,
+            language,
+            modelSettings
+        });
+    }
+  }, [currentRole, useHybridSearch, language, modelSettings, isInitializing]);
+
+  // 3. Callback to refresh documents (e.g. after upload/delete)
+  const refreshDocuments = useCallback(async () => {
+      const allDocs = await db.getAllDocuments();
+      setDocuments(allDocs);
+      buildSearchIndex(allDocs);
+  }, []);
+
+  if (isInitializing) {
+      return (
+          <div className="flex h-screen w-full items-center justify-center bg-slate-50 text-slate-500 gap-2">
+              <span className="w-4 h-4 rounded-full bg-blue-500 animate-pulse"></span>
+              <span className="font-medium">Initializing Enterprise Core...</span>
+          </div>
+      );
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 font-sans">
@@ -98,8 +117,7 @@ const App: React.FC = () => {
         
         {activeTab === 'knowledge' && (
             <KnowledgeBase 
-                documents={documents} 
-                setDocuments={setDocuments} 
+                onRefreshDocs={refreshDocuments} // Pass refresh trigger
                 onViewDocument={setSelectedDoc}
                 language={language}
             />

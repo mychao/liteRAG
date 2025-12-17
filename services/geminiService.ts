@@ -1,105 +1,233 @@
 import { GoogleGenAI } from "@google/genai";
-import { Document, Message, Language, ModelSettings } from '../types';
+import { Document, Message, Language, ModelSettings, Chunk } from '../types';
 
 // Initialize Gemini Client
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 
+// --- Enterprise RAG Configuration ---
+const TOP_K_CHUNKS = 15; // Increased K because chunks are smaller
+const MAX_CONTEXT_CHARS = 80000; // Gemini 1.5 Flash supports huge context, we can be generous
+
+// --- Advanced Search Engine State ---
+// Maps term -> { chunkId: frequency }
+let invertedIndex: Record<string, Record<string, number>> = {}; 
+// Maps chunkId -> Chunk Object
+let chunkRegistry: Record<string, Chunk & { docName: string, docType: string, department: string, uploadDate: number }> = {}; 
+// Maps docId -> Document norm (for TF-IDF normalization)
+let docNorms: Record<string, number> = {}; 
+
+let isIndexed = false;
+
 /**
- * Advanced Scoring Algorithm to simulate a Reranker.
- * In production, this would be a Cross-Encoder model (e.g., BGE-Reranker) or a weighted fusion of Sparse (BM25) + Dense vectors.
+ * Enterprise Tokenizer
+ * Handles mixed English/Chinese text better
  */
-const calculateRelevanceScore = (doc: Document, query: string): number => {
-  const queryLower = query.toLowerCase();
-  const docContentLower = doc.content.toLowerCase();
-  const docNameLower = doc.name.toLowerCase();
-  let score = 0;
+const tokenize = (text: string): string[] => {
+    const normalized = text.toLowerCase();
+    // Match CJK characters or English words
+    const regex = /[\u4e00-\u9fa5]|[\w-]+/g;
+    return normalized.match(regex) || [];
+};
 
-  // 1. Exact Phrase Matching (High Precision Boost)
-  if (docContentLower.includes(queryLower)) score += 50;
-  if (docNameLower.includes(queryLower)) score += 40;
-
-  // 2. Keyword Matching (BM25-style logic)
-  const queryTerms = queryLower.split(/\s+/).filter(term => term.length > 2);
-  let matchedTerms = 0;
-
-  queryTerms.forEach(term => {
-    // Title matches are weighted higher
-    if (docNameLower.includes(term)) score += 20;
-    
-    // Content matches
-    const termRegex = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-    const matchCount = (docContentLower.match(termRegex) || []).length;
-    
-    if (matchCount > 0) {
-      // Add score based on frequency, but cap it to prevent long documents from dominating purely by length
-      score += Math.min(matchCount, 10) * 5; 
-      matchedTerms++;
+/**
+ * Intelligent Chunking Strategy
+ * Splits text into overlapping chunks to preserve context at boundaries.
+ */
+export const chunkDocument = (doc: Document): Chunk[] => {
+    // If it's an image, treat as one chunk
+    if (doc.type.startsWith('image/')) {
+        return [{
+            id: `${doc.id}-img`,
+            docId: doc.id,
+            content: doc.content, // Base64
+            index: 0
+        }];
     }
-  });
 
-  // 3. Query Coverage Boost
-  // If the document contains most of the words in the query, it's likely more relevant
-  if (queryTerms.length > 0) {
-    const coverageRatio = matchedTerms / queryTerms.length;
-    score += coverageRatio * 30;
-  }
+    const CHUNK_SIZE = 800;
+    const OVERLAP = 100;
+    const text = doc.content;
+    const chunks: Chunk[] = [];
+    
+    let start = 0;
+    let chunkIndex = 0;
 
-  // 4. Recency Bias (Slight boost for newer docs)
-  // e.g., A document uploaded today gets +10 points, one from 10 days ago gets +0
-  const daysSinceUpload = (Date.now() - doc.uploadDate) / (1000 * 60 * 60 * 24);
-  score += Math.max(0, 10 - daysSinceUpload); 
+    while (start < text.length) {
+        let end = start + CHUNK_SIZE;
+        
+        // Try to break at a paragraph or sentence to be cleaner
+        if (end < text.length) {
+            const lastNewLine = text.lastIndexOf('\n', end);
+            const lastPeriod = text.lastIndexOf('.', end);
+            
+            if (lastNewLine > start + CHUNK_SIZE / 2) {
+                end = lastNewLine + 1;
+            } else if (lastPeriod > start + CHUNK_SIZE / 2) {
+                end = lastPeriod + 1;
+            }
+        }
 
-  return score;
+        const chunkContent = text.substring(start, end).trim();
+        
+        if (chunkContent.length > 0) {
+            chunks.push({
+                id: `${doc.id}-c${chunkIndex}`,
+                docId: doc.id,
+                content: chunkContent,
+                index: chunkIndex
+            });
+            chunkIndex++;
+        }
+
+        start = end - OVERLAP;
+        // Prevent infinite loop if overlap is too aggressive relative to structure
+        if (start >= text.length || start < 0) break;
+    }
+
+    return chunks;
 };
 
 /**
- * Simulates the RAG Retrieval step with simulated Reranking.
+ * Builds a TF-IDF style Inverted Index on CHUNKS
  */
-const retrieveDocuments = (query: string, documents: Document[], role: string, useHybridSearch: boolean): Document[] => {
-  // 1. Initial Retrieval & Permission Filtering
-  const initialCandidates = documents.filter(doc => 
-    doc.department === 'all' || doc.department === role || role === 'admin'
-  );
+export const buildSearchIndex = (documents: Document[]) => {
+    console.time("Indexing");
+    invertedIndex = {};
+    chunkRegistry = {};
+    docNorms = {};
+    
+    let totalChunks = 0;
 
-  if (!useHybridSearch) {
-    return initialCandidates.sort((a, b) => b.uploadDate - a.uploadDate);
-  }
+    documents.forEach(doc => {
+        // Use existing chunks or generate them on the fly
+        const chunks = doc.chunks && doc.chunks.length > 0 ? doc.chunks : chunkDocument(doc);
+        
+        chunks.forEach(chunk => {
+            chunkRegistry[chunk.id] = {
+                ...chunk,
+                docName: doc.name,
+                docType: doc.type,
+                department: doc.department,
+                uploadDate: doc.uploadDate
+            };
+            totalChunks++;
 
-  // 2. Reranking Step
-  const scoredDocs = initialCandidates.map(doc => ({
-    doc,
-    score: calculateRelevanceScore(doc, query)
-  }));
+            // Indexing Text
+            const textToIndex = `${doc.name} ${chunk.content}`;
+            const tokens = tokenize(textToIndex);
+            const termFreqs: Record<string, number> = {};
 
-  scoredDocs.sort((a, b) => b.score - a.score);
-  console.log("Reranked Documents:", scoredDocs.map(d => `${d.doc.name}: ${d.score.toFixed(1)}`));
+            // Calculate TF (Term Frequency)
+            tokens.forEach(t => {
+                termFreqs[t] = (termFreqs[t] || 0) + 1;
+            });
 
-  // 3. Thresholding
-  const relevantDocs = scoredDocs
-    .filter(item => item.score > 0)
-    .map(item => item.doc);
-
-  if (relevantDocs.length === 0) {
-    return initialCandidates;
-  }
-
-  return relevantDocs;
+            // Update Inverted Index
+            Object.entries(termFreqs).forEach(([term, count]) => {
+                if (!invertedIndex[term]) {
+                    invertedIndex[term] = {};
+                }
+                invertedIndex[term][chunk.id] = count;
+            });
+        });
+    });
+    
+    isIndexed = true;
+    console.timeEnd("Indexing");
+    console.log(`Enterprise Index Built: ${totalChunks} chunks from ${documents.length} docs.`);
 };
 
 /**
- * Call OpenAI Compatible API (OneAPI, Qwen, vLLM, etc.)
+ * BM25-inspired Scoring Algorithm
  */
+const calculateChunkScore = (
+    queryTokens: string[], 
+    chunkId: string, 
+    chunkData: typeof chunkRegistry[string]
+): number => {
+    let score = 0;
+    
+    queryTokens.forEach(term => {
+        const postings = invertedIndex[term];
+        if (postings && postings[chunkId]) {
+            // TF: How many times term appears in this chunk
+            const tf = postings[chunkId]; 
+            
+            // IDF: Inverse Document Frequency (Simulated)
+            // Rarer terms give higher scores
+            const docFreq = Object.keys(postings).length;
+            const idf = 1.0 / (Math.log(1 + docFreq) + 0.1);
+
+            score += tf * idf;
+        }
+    });
+
+    // Boost for Recency
+    const daysSinceUpload = (Date.now() - chunkData.uploadDate) / (1000 * 60 * 60 * 24);
+    score += Math.max(0, 5 - daysSinceUpload * 0.1); 
+
+    // Boost for Title Matches (Heuristic)
+    queryTokens.forEach(term => {
+        if (chunkData.docName.toLowerCase().includes(term)) {
+            score += 2.0;
+        }
+    });
+
+    return score;
+};
+
+/**
+ * Retrieval Logic: Returns sorted CHUNKS instead of Documents
+ */
+const retrieveChunks = (query: string, role: string, useHybridSearch: boolean): any[] => {
+    if (!isIndexed) return [];
+
+    const queryTokens = tokenize(query);
+    if (queryTokens.length === 0) return [];
+
+    const chunkScores: Record<string, number> = {};
+    const candidateChunks = new Set<string>();
+
+    // 1. Recall Candidates (OR query)
+    queryTokens.forEach(term => {
+        const postings = invertedIndex[term];
+        if (postings) {
+            Object.keys(postings).forEach(chunkId => candidateChunks.add(chunkId));
+        }
+    });
+
+    // 2. Score Candidates
+    candidateChunks.forEach(chunkId => {
+        const chunkData = chunkRegistry[chunkId];
+        // Permission Check
+        if (chunkData.department !== 'all' && chunkData.department !== role && role !== 'admin') {
+            return;
+        }
+        
+        chunkScores[chunkId] = calculateChunkScore(queryTokens, chunkId, chunkData);
+    });
+
+    // 3. Sort & Cut
+    return Object.entries(chunkScores)
+        .sort(([, scoreA], [, scoreB]) => scoreB - scoreA)
+        .slice(0, TOP_K_CHUNKS)
+        .map(([id, score]) => ({
+            ...chunkRegistry[id],
+            score
+        }));
+};
+
+
+// ... callOpenAICompatible function remains same ...
 const callOpenAICompatible = async (
     modelSettings: ModelSettings,
     systemInstruction: string,
     query: string,
-    images: { mimeType: string; data: string }[], // Base64 images
+    images: { mimeType: string; data: string }[],
     onStream: (text: string) => void
 ): Promise<string> => {
-    
-    // Format messages for OpenAI API
     const messages = [
         { role: 'system', content: systemInstruction },
         {
@@ -108,9 +236,7 @@ const callOpenAICompatible = async (
                 { type: 'text', text: query },
                 ...images.map(img => ({
                     type: 'image_url',
-                    image_url: {
-                        url: `data:${img.mimeType};base64,${img.data}`
-                    }
+                    image_url: { url: `data:${img.mimeType};base64,${img.data}` }
                 }))
             ]
         }
@@ -119,56 +245,36 @@ const callOpenAICompatible = async (
     try {
         const response = await fetch(`${modelSettings.baseUrl}/chat/completions`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${modelSettings.apiKey}`
-            },
-            body: JSON.stringify({
-                model: modelSettings.modelName,
-                messages: messages,
-                stream: true,
-                temperature: 0.3
-            })
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${modelSettings.apiKey}` },
+            body: JSON.stringify({ model: modelSettings.modelName, messages: messages, stream: true, temperature: 0.3 })
         });
 
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`OpenAI API Error: ${response.status} ${errText}`);
-        }
+        if (!response.ok) throw new Error(await response.text());
 
         const reader = response.body?.getReader();
         const decoder = new TextDecoder();
         let fullText = '';
-
         if (reader) {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-                
                 const chunk = decoder.decode(value, { stream: true });
                 const lines = chunk.split('\n');
-                
                 for (const line of lines) {
                     const trimmed = line.trim();
                     if (trimmed.startsWith('data: ') && trimmed !== 'data: [DONE]') {
                         try {
                             const data = JSON.parse(trimmed.slice(6));
                             const content = data.choices[0]?.delta?.content || '';
-                            if (content) {
-                                fullText += content;
-                                onStream(fullText);
-                            }
-                        } catch (e) {
-                            // Ignore parse errors from partial chunks
-                        }
+                            if (content) { fullText += content; onStream(fullText); }
+                        } catch (e) {}
                     }
                 }
             }
         }
         return fullText;
-
     } catch (e) {
-        console.error("OpenAI/OneAPI Call Failed:", e);
+        console.error("OpenAI Call Failed:", e);
         throw e;
     }
 };
@@ -185,59 +291,69 @@ export const generateRAGResponse = async (
   onStream: (text: string) => void
 ): Promise<string> => {
   
-  // 1. Retrieve relevant context with enhanced reranking
-  const contextDocs = retrieveDocuments(query, documents, role, useHybridSearch);
+  // Initialize Index if needed (Note: In production, this runs in a worker)
+  if (!isIndexed || Object.keys(invertedIndex).length === 0) {
+      buildSearchIndex(documents);
+  }
+
+  // 1. Retrieve RELEVANT CHUNKS (Not full docs)
+  // This is the key difference: We get precise segments.
+  const relevantChunks = retrieveChunks(query, role, useHybridSearch);
   
-  // 2. Construct Context
+  // 2. Context Assembly
   let contextString = "KNOWLEDGE BASE CONTEXT:\n";
   const imageParts: { mimeType: string; data: string }[] = [];
+  let currentContextLength = 0;
 
-  contextDocs.forEach(doc => {
-    if (doc.type.startsWith('image/')) {
-        // Collect images for multimodal request
-        imageParts.push({
-            mimeType: doc.type,
-            data: doc.content
-        });
-        contextString += `\n--- START IMAGE: ${doc.name} ---\n(Image content provided above)\n--- END IMAGE: ${doc.name} ---\n`;
+  // Group chunks by Document for cleaner display
+  // But maintain rank order implicitly or sort by doc? 
+  // Better to keep rank order so LLM sees most relevant info first.
+  
+  for (const chunk of relevantChunks) {
+    let contentToAdd = "";
+    
+    if (chunk.docType.startsWith('image/')) {
+        imageParts.push({ mimeType: chunk.docType, data: chunk.content });
+        contentToAdd = `\n[Image: ${chunk.docName}]\n`;
     } else {
-        // Text files
-        contextString += `\n--- START DOCUMENT: ${doc.name} ---\n`;
-        contextString += doc.content.substring(0, 20000); 
-        contextString += `\n--- END DOCUMENT: ${doc.name} ---\n`;
+        contentToAdd = `\n--- SOURCE: ${chunk.docName} (Excerpt) ---\n${chunk.content}\n`;
     }
-  });
 
-  if (contextDocs.length === 0) {
-    contextString += "No accessible documents found in the knowledge base for your department.\n";
+    if (currentContextLength + contentToAdd.length > MAX_CONTEXT_CHARS) break;
+
+    contextString += contentToAdd;
+    currentContextLength += contentToAdd.length;
+  }
+
+  if (relevantChunks.length === 0) {
+    contextString += "No relevant information found in the knowledge base.\n";
   }
 
   const systemInstruction = `
-You are an intelligent enterprise knowledge assistant. 
-Your goal is to answer user questions STRICTLY based on the provided KNOWLEDGE BASE CONTEXT.
+You are an advanced enterprise knowledge assistant.
+Answer the user's question using ONLY the provided context excerpts.
+
+CONTEXT STRUCTURE:
+The context consists of "Chunks" (excerpts) from various documents.
+Each chunk is marked with "--- SOURCE: filename (Excerpt) ---".
 
 RULES:
-1. Use the provided context to answer. If the answer isn't in the context, say "I cannot find that information in the knowledge base."
-2. ${useHybridSearch ? 'Use "Hybrid Search" logic: Pay close attention to specific product codes, versions, or exact keyword matches in the documents.' : 'Focus on semantic understanding of the documents.'}
-3. CITATIONS: You MUST cite your sources. When you use information from a document, append [Source: filename] to the end of the sentence or paragraph.
-4. If the user asks about an image, describe the image context provided.
-5. FORMATTING: Use Markdown to structure your answer. Use bolding for key terms, bullet points for lists, and headers for sections to ensure readability. Avoid long walls of text.
-6. Keep answers professional and concise.
-7. LANGUAGE: The user interface is currently in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}. Please reply to the user in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}, unless the user explicitly asks for another language.
+1. **Precision**: Use the specific details from the excerpts.
+2. **Citations**: STRICTLY cite the source filename when using information. Format: [[Source: filename]].
+3. **Honesty**: If the provided excerpts do not contain the answer, state that you don't have enough information. Do not hallucinate.
+4. **Synthesis**: If multiple chunks discuss the same topic, synthesize the information into a coherent answer.
+5. Language: Reply in ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
 
 ${contextString}
 `;
 
-  // Capture full prompt for debug
-  const debugPrompt = `=== SYSTEM INSTRUCTION (Includes Retrieved Context) ===\n${systemInstruction}\n\n=== USER INPUT ===\n${query}${imageParts.length > 0 ? `\n\n[Attached ${imageParts.length} Images]` : ''}`;
+  const debugPrompt = `=== SYSTEM INSTRUCTION (Context Size: ${currentContextLength} chars) ===\n${systemInstruction}\n\n=== USER INPUT ===\n${query}`;
   onPromptDebug(debugPrompt);
 
   try {
-    // 3. Dispatch to selected provider
     if (modelSettings.provider === 'openai') {
         return await callOpenAICompatible(modelSettings, systemInstruction, query, imageParts, onStream);
     } else {
-        // Default: Gemini
         const geminiParts: any[] = imageParts.map(img => ({
             inlineData: { mimeType: img.mimeType, data: img.data }
         }));
@@ -265,8 +381,8 @@ ${contextString}
   } catch (error) {
     console.error("LLM Service Error:", error);
     const msg = language === 'zh' 
-        ? "调用大模型失败。请检查系统设置中的模型配置（API Key / Base URL）。" 
-        : "Failed to call LLM. Please check your Model Settings (API Key / Base URL).";
+        ? "服务暂时不可用。" 
+        : "Service temporarily unavailable.";
     onStream(msg);
     return msg;
   }

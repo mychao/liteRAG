@@ -10,11 +10,19 @@ export interface ModelSettings {
   apiKey: string;
 }
 
+export interface Chunk {
+  id: string;
+  docId: string;
+  content: string;
+  index: number;
+}
+
 export interface Document {
   id: string;
   name: string;
   type: string; // 'text/plain', 'image/png', etc.
   content: string; // Text content or Base64 for images
+  chunks?: Chunk[]; // Added: Pre-computed chunks for granular retrieval
   department: Role | 'all';
   uploadDate: number;
   status: 'processing' | 'ready' | 'error';
