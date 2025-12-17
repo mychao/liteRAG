@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import Sidebar from './components/Sidebar';
 import ChatInterface from './components/ChatInterface';
@@ -27,7 +28,9 @@ const App: React.FC = () => {
     provider: 'gemini',
     modelName: 'gemini-2.5-flash',
     baseUrl: '',
-    apiKey: ''
+    apiKey: '',
+    useServer: false,
+    serverUrl: 'http://localhost:8000'
   });
 
   // 1. Initialize DB and Load Data
@@ -43,7 +46,8 @@ const App: React.FC = () => {
                 setUseHybridSearch(savedSettings.useHybridSearch);
                 setLanguage(savedSettings.language);
                 if (savedSettings.modelSettings) {
-                    setModelSettings(savedSettings.modelSettings);
+                    // Merge in case of new fields
+                    setModelSettings(prev => ({ ...prev, ...savedSettings.modelSettings }));
                 }
             }
 
@@ -120,6 +124,7 @@ const App: React.FC = () => {
                 onRefreshDocs={refreshDocuments} // Pass refresh trigger
                 onViewDocument={setSelectedDoc}
                 language={language}
+                modelSettings={modelSettings}
             />
         )}
         

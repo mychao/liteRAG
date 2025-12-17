@@ -1,3 +1,4 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Document, Message, Language, ModelSettings, Chunk } from '../types';
 
@@ -10,7 +11,7 @@ const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
 const TOP_K_CHUNKS = 15; // Increased K because chunks are smaller
 const MAX_CONTEXT_CHARS = 80000; // Gemini 1.5 Flash supports huge context, we can be generous
 
-// --- Advanced Search Engine State ---
+// --- Advanced Search Engine State (Local Mode) ---
 // Maps term -> { chunkId: frequency }
 let invertedIndex: Record<string, Record<string, number>> = {}; 
 // Maps chunkId -> Chunk Object
@@ -219,6 +220,89 @@ const retrieveChunks = (query: string, role: string, useHybridSearch: boolean): 
         }));
 };
 
+/**
+ * Upload Document to Enterprise Backend
+ */
+export const uploadDocumentToServer = async (
+    file: File, 
+    department: string, 
+    serverUrl: string
+): Promise<void> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('department', department);
+
+    try {
+        const response = await fetch(`${serverUrl}/upload`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            throw new Error(`Upload failed: ${response.statusText}`);
+        }
+        
+        // The backend handles the indexing asynchronously
+    } catch (e) {
+        console.error("Server upload failed:", e);
+        throw e;
+    }
+};
+
+/**
+ * Call Remote Enterprise Backend (Python FastAPI)
+ */
+const callEnterpriseBackend = async (
+    query: string,
+    role: string,
+    language: Language,
+    serverUrl: string,
+    onPromptDebug: (prompt: string) => void,
+    onStream: (text: string) => void
+): Promise<string> => {
+    onPromptDebug("Executing Remote RAG Pipeline on: " + serverUrl);
+    
+    try {
+        const response = await fetch(`${serverUrl}/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query,
+                user_role: role,
+                language: language
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Server Error: ${response.status} ${response.statusText}`);
+        }
+
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let fullText = '';
+
+        if (reader) {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                // Simple stream decoding
+                const chunk = decoder.decode(value, { stream: true });
+                fullText += chunk;
+                onStream(fullText);
+            }
+        }
+        return fullText;
+
+    } catch (e) {
+        console.error("Backend connection failed:", e);
+        const errMsg = language === 'zh' 
+            ? "无法连接到企业后端服务器，请检查 URL 配置或回退到本地模式。" 
+            : "Cannot connect to Enterprise Backend. Please check URL in settings or switch to Local Mode.";
+        onStream(errMsg);
+        return errMsg;
+    }
+};
+
 
 // ... callOpenAICompatible function remains same ...
 const callOpenAICompatible = async (
@@ -290,6 +374,20 @@ export const generateRAGResponse = async (
   onPromptDebug: (prompt: string) => void,
   onStream: (text: string) => void
 ): Promise<string> => {
+  
+  // --- BRANCH: Enterprise Server Mode ---
+  if (modelSettings.useServer && modelSettings.serverUrl) {
+      return callEnterpriseBackend(
+          query,
+          role,
+          language,
+          modelSettings.serverUrl,
+          onPromptDebug,
+          onStream
+      );
+  }
+
+  // --- BRANCH: Local Browser Mode ---
   
   // Initialize Index if needed (Note: In production, this runs in a worker)
   if (!isIndexed || Object.keys(invertedIndex).length === 0) {

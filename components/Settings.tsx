@@ -1,5 +1,6 @@
+
 import React from 'react';
-import { Sliders, Shield, RefreshCw, Cpu, Globe, Key, Box } from 'lucide-react';
+import { Sliders, Shield, RefreshCw, Cpu, Globe, Key, Box, Server, Laptop } from 'lucide-react';
 import { Role, Language, ModelSettings, ModelProvider } from '../types';
 import { translations } from '../utils/i18n';
 
@@ -24,7 +25,7 @@ const Settings: React.FC<SettingsProps> = ({
 }) => {
   const t = translations[language].settings;
 
-  const handleModelChange = (key: keyof ModelSettings, value: string) => {
+  const handleModelChange = (key: keyof ModelSettings, value: any) => {
     setModelSettings({ ...modelSettings, [key]: value });
   };
 
@@ -36,14 +37,101 @@ const Settings: React.FC<SettingsProps> = ({
             <p className="text-slate-500 mt-1">{t.subtitle}</p>
         </div>
 
-        {/* Model Configuration */}
+        {/* Architecture Mode Selection */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex items-start gap-4">
+                <div className="p-3 bg-blue-100 text-blue-600 rounded-lg">
+                    <Server size={24} />
+                </div>
+                <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-slate-900 mb-4">{t.archConfig}</h3>
+                    
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                        <button
+                            onClick={() => handleModelChange('useServer', false)}
+                            className={`px-4 py-3 rounded-lg border text-sm font-medium transition-all flex flex-col items-center justify-center gap-2 ${
+                                !modelSettings.useServer 
+                                ? 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' 
+                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                        >
+                            <Laptop size={20} />
+                            {t.archLocal}
+                        </button>
+                        <button
+                            onClick={() => handleModelChange('useServer', true)}
+                            className={`px-4 py-3 rounded-lg border text-sm font-medium transition-all flex flex-col items-center justify-center gap-2 ${
+                                modelSettings.useServer 
+                                ? 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' 
+                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                            }`}
+                        >
+                            <Server size={20} />
+                            {t.archServer}
+                        </button>
+                    </div>
+
+                    {modelSettings.useServer && (
+                        <div className="animate-in fade-in slide-in-from-top-2 duration-300">
+                            <label className="block text-sm font-medium text-slate-700 mb-1 flex items-center gap-2">
+                                <Globe size={14} /> {t.serverUrl}
+                            </label>
+                            <input 
+                                type="text"
+                                value={modelSettings.serverUrl}
+                                onChange={(e) => handleModelChange('serverUrl', e.target.value)}
+                                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                                placeholder={t.serverPlaceholder}
+                            />
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+
+        {/* Permission Simulation */}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div className="flex items-start gap-4">
+                <div className="p-3 bg-indigo-100 text-indigo-600 rounded-lg">
+                    <Shield size={24} />
+                </div>
+                <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-slate-900 mb-2">{t.roleSim}</h3>
+                    <p className="text-slate-600 text-sm mb-4">
+                        {t.roleDesc}
+                    </p>
+                    
+                    <div className="grid grid-cols-3 gap-3">
+                        {(['admin', 'hr', 'rnd'] as Role[]).map((role) => (
+                            <button
+                                key={role}
+                                onClick={() => setCurrentRole(role)}
+                                className={`px-4 py-3 rounded-lg border text-sm font-medium transition-all ${
+                                    currentRole === role 
+                                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700 ring-1 ring-indigo-500' 
+                                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                            >
+                                <span className="uppercase">{role}</span> {t.roleUser.replace('{role}', '')}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {/* Model Configuration */}
+        <div className={`bg-white p-6 rounded-xl shadow-sm border border-slate-200 ${modelSettings.useServer ? 'opacity-60 pointer-events-none grayscale' : ''}`}>
             <div className="flex items-start gap-4 mb-6">
                 <div className="p-3 bg-emerald-100 text-emerald-600 rounded-lg">
                     <Cpu size={24} />
                 </div>
                 <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-slate-900 mb-2">{t.modelConfig}</h3>
+                    <div className="flex justify-between items-center mb-2">
+                         <h3 className="text-lg font-semibold text-slate-900">{t.modelConfig}</h3>
+                         {modelSettings.useServer && <span className="text-xs bg-slate-100 px-2 py-1 rounded text-slate-500">Managed by Server</span>}
+                    </div>
+                   
                     
                     <div className="space-y-4">
                         {/* Provider Selection */}
@@ -124,39 +212,8 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
         </div>
 
-        {/* Permission Simulation */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <div className="flex items-start gap-4">
-                <div className="p-3 bg-indigo-100 text-indigo-600 rounded-lg">
-                    <Shield size={24} />
-                </div>
-                <div className="flex-1">
-                    <h3 className="text-lg font-semibold text-slate-900 mb-2">{t.roleSim}</h3>
-                    <p className="text-slate-600 text-sm mb-4">
-                        {t.roleDesc}
-                    </p>
-                    
-                    <div className="grid grid-cols-3 gap-3">
-                        {(['admin', 'hr', 'rnd'] as Role[]).map((role) => (
-                            <button
-                                key={role}
-                                onClick={() => setCurrentRole(role)}
-                                className={`px-4 py-3 rounded-lg border text-sm font-medium transition-all ${
-                                    currentRole === role 
-                                    ? 'border-indigo-500 bg-indigo-50 text-indigo-700 ring-1 ring-indigo-500' 
-                                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                                }`}
-                            >
-                                <span className="uppercase">{role}</span> {t.roleUser.replace('{role}', '')}
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        </div>
-
         {/* Retrieval Strategy */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div className={`bg-white p-6 rounded-xl shadow-sm border border-slate-200 ${modelSettings.useServer ? 'opacity-60 pointer-events-none grayscale' : ''}`}>
             <div className="flex items-start gap-4">
                 <div className="p-3 bg-purple-100 text-purple-600 rounded-lg">
                     <RefreshCw size={24} />

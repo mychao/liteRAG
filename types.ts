@@ -1,3 +1,4 @@
+
 export type Role = 'admin' | 'hr' | 'rnd';
 export type Language = 'en' | 'zh';
 
@@ -6,8 +7,11 @@ export type ModelProvider = 'gemini' | 'openai';
 export interface ModelSettings {
   provider: ModelProvider;
   modelName: string;
-  baseUrl: string;
+  baseUrl: string; // Used for OpenAI or Custom Server
   apiKey: string;
+  // New Enterprise Config
+  useServer: boolean;
+  serverUrl: string;
 }
 
 export interface Chunk {

@@ -1,3 +1,4 @@
+
 import { Language } from '../types';
 
 export const translations = {
@@ -6,8 +7,8 @@ export const translations = {
       chat: 'Chat Assistant',
       knowledge: 'Knowledge Base',
       settings: 'Settings',
-      subtitle: 'Enterprise Edition',
-      status: 'Vector DB Online'
+      subtitle: 'LiteRAG Core',
+      status: 'System Online'
     },
     chat: {
       initialMessage: "Hello! I'm your Enterprise Knowledge Assistant. I have access to {count} document(s) in the system. How can I help you today?",
@@ -28,7 +29,8 @@ export const translations = {
       docNotFound: 'Document not found',
       viewPrompt: 'View Prompt',
       promptDebugTitle: 'Full Prompt Context',
-      copyPrompt: 'Copy Prompt'
+      copyPrompt: 'Copy Prompt',
+      serverMode: 'LiteRAG Server'
     },
     knowledge: {
       title: 'Knowledge Base Management',
@@ -59,12 +61,12 @@ export const translations = {
     },
     settings: {
       title: 'System Configuration',
-      subtitle: 'Manage retrieval strategies and simulate permissions.',
+      subtitle: 'Manage retrieval strategies and architecture.',
       roleSim: 'Role Simulation (Multi-Tenancy)',
       roleDesc: 'Switch your user role to test document access control. HR users cannot see R&D documents, etc.',
       roleUser: 'User',
       hybridTitle: 'Hybrid Search',
-      hybridDesc: 'Combines Dense Vector Retrieval (Semantic) with BM25 (Keyword Matching). Enable this to better find specific part numbers (e.g., "X-2024-V1") or exact phrases.',
+      hybridDesc: 'Combines Dense Vector Retrieval (Semantic) with BM25 (Keyword Matching).',
       modelConfig: 'Model Configuration',
       embeddingModel: 'Embedding Model',
       genModel: 'Generation Model',
@@ -80,7 +82,12 @@ export const translations = {
       geminiInfo: 'Using built-in Google GenAI SDK. API Key comes from environment variables.',
       openaiInfo: 'Compatible with OpenAI, Qwen (Tongyi), vLLM, or OneAPI.',
       placeholderUrl: 'e.g. https://api.openai.com/v1',
-      placeholderKey: 'sk-...'
+      placeholderKey: 'sk-...',
+      archConfig: 'Architecture Mode',
+      archLocal: 'Browser-based (Local Demo)',
+      archServer: 'LiteRAG Server (Python FastAPI)',
+      serverUrl: 'Backend Server URL',
+      serverPlaceholder: 'e.g. http://localhost:8000'
     },
     modal: {
       copy: 'Copy Content',
@@ -97,8 +104,8 @@ export const translations = {
       chat: 'AI 问答助手',
       knowledge: '知识库管理',
       settings: '系统设置',
-      subtitle: '企业版',
-      status: '向量库运行中'
+      subtitle: 'LiteRAG Core',
+      status: '系统运行中'
     },
     chat: {
       initialMessage: "你好！我是你的企业知识助手。目前已接入 {count} 份文档。请问有什么可以帮你？",
@@ -119,7 +126,8 @@ export const translations = {
       docNotFound: '文档未找到',
       viewPrompt: '查看完整提示词',
       promptDebugTitle: '完整提示词上下文',
-      copyPrompt: '复制提示词'
+      copyPrompt: '复制提示词',
+      serverMode: 'LiteRAG 服务器'
     },
     knowledge: {
       title: '知识库管理',
@@ -150,7 +158,7 @@ export const translations = {
     },
     settings: {
       title: '系统配置',
-      subtitle: '管理检索策略和模拟权限。',
+      subtitle: '管理检索策略和系统架构。',
       roleSim: '角色模拟 (多租户)',
       roleDesc: '切换用户角色以测试文档访问控制。HR 用户无法查看 R&D 文档等。',
       roleUser: '用户',
@@ -171,7 +179,12 @@ export const translations = {
       geminiInfo: '使用内置 Google GenAI SDK。API Key 来自环境变量。',
       openaiInfo: '兼容 OpenAI、通义千问、vLLM 或 OneAPI 接口。',
       placeholderUrl: '例如 https://dashscope.aliyuncs.com/compatible-mode/v1',
-      placeholderKey: 'sk-...'
+      placeholderKey: 'sk-...',
+      archConfig: '架构模式',
+      archLocal: '浏览器端 (本地演示)',
+      archServer: 'LiteRAG 后端 (FastAPI + Chroma)',
+      serverUrl: '后端服务器地址',
+      serverPlaceholder: '例如 http://localhost:8000'
     },
     modal: {
       copy: '复制内容',

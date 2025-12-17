@@ -1,19 +1,21 @@
+
 import React, { useRef, useState, useEffect } from 'react';
-import { UploadCloud, File, Trash2, CheckCircle, Loader2, XCircle, Image as ImageIcon, FileType, Eye, ChevronRight, ChevronDown, ChevronLeft } from 'lucide-react';
-import { Document, Role, Language } from '../types';
+import { UploadCloud, File, Trash2, CheckCircle, Loader2, XCircle, Image as ImageIcon, FileType, Eye, ChevronRight, ChevronDown, ChevronLeft, Server } from 'lucide-react';
+import { Document, Role, Language, ModelSettings } from '../types';
 import { translations } from '../utils/i18n';
 import { db } from '../services/db';
-import { chunkDocument } from '../services/geminiService';
+import { chunkDocument, uploadDocumentToServer } from '../services/geminiService';
 
 interface KnowledgeBaseProps {
   onRefreshDocs: () => void; // Parent trigger to update search index
   onViewDocument: (doc: Document) => void;
   language: Language;
+  modelSettings?: ModelSettings;
 }
 
 const PAGE_SIZE = 10;
 
-const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ onRefreshDocs, onViewDocument, language }) => {
+const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ onRefreshDocs, onViewDocument, language, modelSettings }) => {
   const t = translations[language].knowledge;
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -103,12 +105,24 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ onRefreshDocs, onViewDocu
   const handleFiles = async (files: FileList) => {
     const fileArray = Array.from(files);
     setLoading(true);
-    setProcessingStatus("Processing & Chunking...");
+    
+    // Check if running in Enterprise Server Mode
+    const isServerMode = modelSettings?.useServer;
+    const serverUrl = modelSettings?.serverUrl || '';
+
+    setProcessingStatus(isServerMode ? "Uploading to Enterprise Server..." : "Processing & Chunking Locally...");
 
     const processedDocs: Document[] = [];
 
     for (const file of fileArray) {
       try {
+        // 1. If Server Mode, Upload to Backend (ETL Pipeline)
+        if (isServerMode && serverUrl) {
+            await uploadDocumentToServer(file, uploadRole, serverUrl);
+        }
+
+        // 2. We ALSO process locally so the UI updates immediately.
+        // In a perfect world, we'd refetch from server, but for hybrid UX, we do both.
         const content = await readFileContent(file);
         
         // Base Document
@@ -122,19 +136,18 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ onRefreshDocs, onViewDocu
             status: 'ready'
         };
 
-        // --- ENTERPRISE FEATURE: Pre-Chunking ---
-        // Generate chunks immediately upon upload so retrieval is fast later.
-        // We import the same logic used in the service.
+        // Pre-Chunking (Local Search Fallback)
         newDoc.chunks = chunkDocument(newDoc);
         
         processedDocs.push(newDoc);
       } catch (e) {
-          console.error("Error reading file", file.name, e);
+          console.error("Error processing file", file.name, e);
+          alert(`Failed to process ${file.name}: ${e instanceof Error ? e.message : 'Unknown error'}`);
       }
     }
 
     if (processedDocs.length > 0) {
-        // Save to DB
+        // Save to Local DB (Syncs UI List)
         await db.addDocuments(processedDocs);
         // Refresh Global Index
         onRefreshDocs();
@@ -192,9 +205,16 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ onRefreshDocs, onViewDocu
         </div>
 
         {/* Upload Area */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div className={`bg-white p-6 rounded-xl shadow-sm border border-slate-200 ${modelSettings?.useServer ? 'ring-2 ring-blue-500/20' : ''}`}>
            <div className="flex items-center justify-between mb-4">
-               <h3 className="font-semibold text-slate-800">{t.addNew}</h3>
+               <div className="flex items-center gap-2">
+                   <h3 className="font-semibold text-slate-800">{t.addNew}</h3>
+                   {modelSettings?.useServer && (
+                       <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+                           <Server size={10} /> Syncing to Server
+                       </span>
+                   )}
+               </div>
                <div className="flex items-center gap-2">
                    <span className="text-sm text-slate-600">{t.assignDept}</span>
                    <select 
@@ -226,13 +246,13 @@ const KnowledgeBase: React.FC<KnowledgeBaseProps> = ({ onRefreshDocs, onViewDocu
               multiple
               className="hidden"
               onChange={handleChange}
-              accept=".txt,.md,.json,.csv,.png,.jpg,.jpeg"
+              accept=".txt,.md,.json,.csv,.png,.jpg,.jpeg,.pdf" // Added .pdf support for server mode
             />
-            <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-4">
+            <div className={`w-16 h-16 rounded-full flex items-center justify-center mb-4 transition-colors ${modelSettings?.useServer ? 'bg-indigo-100 text-indigo-600' : 'bg-blue-100 text-blue-600'}`}>
               <UploadCloud size={32} />
             </div>
             <p className="text-lg font-medium text-slate-700">{t.dragDrop}</p>
-            <p className="text-sm text-slate-500 mt-1">{t.supported}</p>
+            <p className="text-sm text-slate-500 mt-1">{t.supported} {modelSettings?.useServer && ', .pdf'}</p>
           </div>
         </div>
 
