@@ -1,0 +1,5 @@
+{
+  "name": "LiteRAG Enterprise",
+  "description": "A lightweight, controllable, multimodal enterprise knowledge base system simulating RAG with Gemini.",
+  "requestFramePermissions": []
+}
